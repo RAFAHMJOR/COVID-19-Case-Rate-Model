@@ -1,0 +1,102 @@
+# Import required packages
+import pandas as pd
+from sklearn.model_selection import KFold
+from mlxtend.feature_selection import SequentialFeatureSelector as SFS
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix, classification_report
+import matplotlib.pylab as plt
+import seaborn as sns
+from sklearn.preprocessing import StandardScaler
+from mord import LogisticIT
+ 
+# Load data
+data_df = pd.read_excel(r'C:\Users\rafat\Desktop\ISE5435 Group Project.xlsx', sheet_name=data)
+ 
+ 
+# define function to get cleaned and transformed data
+def prepared_data(df, dependent):
+    df.columns = [s.strip().replace(' ', '_') for s in df.columns]
+    df.set_index(df.State, inplace=True)
+    df.drop(columns=['State'], inplace=True)
+    # to define the case rank category of each state based its value
+    df['Case_Rank'] = pd.cut(df['Case_Rate'], [0, 0.05, 0.10, 0.15], labels=[0, 1, 2]).astype(int)
+    X = pd.DataFrame(df, columns=df.columns)
+    exclude_col = ['Cases', 'Death', 'Case_Rate', 'Death_Rate', 'Case_Rank']
+    X.drop(columns=exclude_col, inplace=True)
+    scaler = StandardScaler()
+    X_new = pd.DataFrame(scaler.fit_transform(X), columns=X.columns, index=X.index)
+    y = df[dependent]
+    return X_new, y
+ 
+ 
+# get X and y from our dataset
+dependent = 'Case_Rank'
+X, y = prepared_data(data_df, dependent)
+ 
+ 
+# define the estimator model and selector process which is stepwise and number of folds cv
+def best_subset_research(random_seed):
+    # build the Ordinal logistic model
+    logit = LogisticIT(alpha=0)
+    # define number of folds to divide our dataset
+    cv = KFold(n_splits=4, random_state=random_seed, shuffle=True)
+    # define the sequential features selector tool using the logistic model
+    sfs1 = SFS(logit, k_features=(1, 14), forward=True, floating=True, scoring='accuracy', cv=cv)
+    sfs1.fit(X, y)
+    best_score = sfs1.k_score_
+    best_subset_var_name = sfs1.k_feature_names_
+    best_subset = pd.DataFrame(sfs1.fit_transform(X, y), columns=best_subset_var_name)
+    return best_score,best_subset_var_name, best_subset
+ 
+
+# get the score, selected features and new X
+random_seed = 7
+score, new_col,X_new = best_subset_research(random_seed)
+print(pd.DataFrame({'Selected Features': new_col}))
+print('------------------------------------')
+print('Score for the cross validation = {:.2f}'.format(score))
+print('------------------------------------')
+ 
+# split data to train and valid dataset based on new X
+train_X, valid_X, train_y, valid_y = train_test_split(X_new, y, test_size=0.25, random_state=random_seed)
+ 
+# build the Ordinal logistic model for the new X and get the theta and the coefficients of the model
+model = LogisticIT(alpha=0)
+model.fit(train_X, train_y)
+print(' theta', model.theta_)
+print(' coefficients', model.coef_)
+ 
+# find the probability of each state (0, 1, 2) for the validation dataset
+valid_probs = model.predict_proba(valid_X)
+# find the prediction for the validation dataset
+valid_prediction = model.predict(valid_X)
+train_prediction = model.predict(train_X)
+# find the prediction for the validation dataset
+valid_prediction = model.predict(valid_X)
+# evaluate our model
+results = pd.DataFrame({'actual': valid_y, 'predicted': valid_prediction, 'P(0)': [p[0] for p in valid_probs],'P(1)': [p[1] for p in valid_probs], 'P(2)': [p[2] for p in valid_probs] })
+print(results)
+ 
+# Plot confusion matrix graph for training and validation dataset
+confusion_matrix_train = pd.DataFrame(confusion_matrix(train_y, train_prediction))
+confusion_matrix_valid = pd.DataFrame(confusion_matrix(valid_y, valid_prediction))
+fig = plt.figure(figsize=(10, 10))  # create figure
+ax0 = fig.add_subplot(1, 2, 1)  # add subplot 1 (1 row, 2 columns, first plot)
+ax1 = fig.add_subplot(1, 2, 2)  # add subplot 2 (1 row, 2 columns, second plot). See tip below**
+sns.heatmap(confusion_matrix_train, annot=True, fmt=".0f", linewidths=.8, square=True, cmap='Blues_r', ax=ax0)
+ax0.set_title('confusion matrix for training dataset')
+ax0.set_xlabel('Predicted label')
+ax0.set_ylabel('Actual label')
+sns.heatmap(confusion_matrix_valid, annot=True, fmt=".0f", linewidths=.8, square=True, cmap='Blues_r', ax=ax1)
+ax1.set_title('confusion matrix for validation dataset')
+ax1.set_xlabel('Predicted label')
+ax1.set_ylabel('Actual label')
+plt.show()
+ 
+# Classification report for training and validation dataset
+print()
+print('Training Classification report is as:')
+print(classification_report(train_y, train_prediction))
+print()
+print('Validation Classification report is as:')
+print(classification_report(valid_y, valid_prediction))
